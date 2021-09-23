@@ -2344,6 +2344,43 @@ bail:
 	return err;
 }
 
+static int fastrpc_release_current_dsp_process(struct fastrpc_file *fl)
+{
+	int err = 0;
+	struct fastrpc_ioctl_invoke_crc ioctl;
+	remote_arg_t ra[1];
+	int tgid = 0;
+
+	VERIFY(err, fl->cid >= 0 && fl->cid < NUM_CHANNELS);
+	if (err)
+		goto bail;
+	VERIFY(err, fl->sctx != NULL);
+	if (err)
+		goto bail;
+	VERIFY(err, fl->apps->channel[fl->cid].rpdev != NULL);
+	if (err)
+		goto bail;
+	VERIFY(err, fl->apps->channel[fl->cid].issubsystemup == 1);
+	if (err)
+		goto bail;
+	tgid = fl->tgid;
+	ra[0].buf.pv = (void *)&tgid;
+	ra[0].buf.len = sizeof(tgid);
+	ioctl.inv.handle = FASTRPC_STATIC_HANDLE_KERNEL;
+	ioctl.inv.sc = REMOTE_SCALARS_MAKE(1, 1, 0);
+	ioctl.inv.pra = ra;
+	ioctl.fds = NULL;
+	ioctl.attrs = NULL;
+	ioctl.crc = NULL;
+	VERIFY(err, 0 == (err = fastrpc_internal_invoke(fl,
+		FASTRPC_MODE_PARALLEL, 1, &ioctl)));
+	if (err && fl->dsp_proc_init)
+		pr_err("adsprpc: %s: releasing DSP process failed for %s, returned 0x%x",
+					__func__, current->comm, err);
+bail:
+	return err;
+}
+
 static int fastrpc_mmap_on_dsp(struct fastrpc_file *fl, uint32_t flags,
 					uintptr_t va, uint64_t phys,
 					size_t size, uintptr_t *raddr)
@@ -2959,6 +2996,8 @@ static int fastrpc_file_free(struct fastrpc_file *fl)
 	if (!fl)
 		return 0;
 	cid = fl->cid;
+
+	(void)fastrpc_release_current_dsp_process(fl);
 
 	spin_lock(&fl->apps->hlock);
 	hlist_del_init(&fl->hn);
